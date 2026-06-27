@@ -3,9 +3,14 @@ import sys
 from dotenv import load_dotenv
 from google import genai  #google sdk
 from google.genai import types
+
 from functions.get_files_info import get_files_info
 from functions.get_files_info import schema_get_files_info
-from google.genai import types
+from functions.get_file_content import schema_get_file_content
+from functions.write_file import schema_write_file
+from functions.run_python_file import schema_run_python_file
+
+from call_function import call_function
 
 def main():
     load_dotenv()
@@ -19,7 +24,16 @@ def main():
             When a user asks a question or makes a request, make a function call plan. You can perform the following operations:
 
             - List files and directories
+            - Read the content of a file
+            - Write to a file (create or update)
+            - Run a python file with optional arguments
 
+            When the user asks about the code project - they are referring to the workign directory. 
+            So you should typically start by looking at the project's files and 
+            figuring out how to run the project and how to run uts tests, 
+            you will always want to test the tests and 
+            the actual project to verify that behaviour is working.
+            
             All paths you provide should be relative to the working directory. You do not need to specify the working directory in your function calls as it is automatically injected for security reasons.
 
         """
@@ -38,40 +52,56 @@ def main():
     messages = [ types.Content(role="user", parts = [types.Part(text= prompt)])]  #A1
 
     available_functions = types.Tool(
-        function_declarations=[schema_get_files_info],
+        function_declarations=[
+            schema_get_files_info,
+            schema_get_file_content,
+            schema_write_file,
+            schema_run_python_file,
+            ]
     )
 
     config=types.GenerateContentConfig(
         tools=[available_functions], system_instruction=system_prompt
     )
     
-    response = client.models.generate_content(
-        model = "gemini-2.5-flash",
-        contents = messages,
-        config = config, # types.GenerateContentConfig(system_instruction = system_prompt),
+    max_iter = 20
+    for i in range(0, max_iter):
 
-    )
+        response = client.models.generate_content(
+            model = "gemini-2.5-flash",
+            contents = messages,
+            config = config, # types.GenerateContentConfig(system_instruction = system_prompt),
 
+        )
 
-    if response is None or response.usage_metadata is None:
-        print("Invalid response")
-        return
+        if response is None or response.usage_metadata is None:
+            print("Invalid response")
+            return
+        
+        if verbose_Flag :
+
+            print(f"User Prompt : {prompt}")
+            print(f"Prompt tokens: {response.usage_metadata.prompt_token_count}")
+            print(f"Response tokens: {response.usage_metadata.candidates_token_count}")
+
+        
+        if response.candidates:  # agent here decides what to call 
+            for candidate in response.candidates:
+                if candidate is None or candidate.content is None:
+                    continue
+                messages.append(candidate.content)
+   
+
+        if response.function_calls: # agent actually calls func here
+            for function_call_part in response.function_calls:
+                result = call_function(function_call_part, verbose_Flag)
+                messages.append(result)  
+                #print(result)
+        else: 
+            # got final op
+            print(response.text)
+            return
     
-    if verbose_Flag :
-
-        print(f"User Prompt : {prompt}")
-        print(f"Prompt tokens: {response.usage_metadata.prompt_token_count}")
-        print(f"Response tokens: {response.usage_metadata.candidates_token_count}")
-
-    
-    if response.function_calls:
-        for function_call_part in response.function_calls:
-            print(
-                f"Calling function: {function_call_part.name}({function_call_part.args})"
-            )   
-    else: 
-        print(response.text)
- 
 
 # print(get_files_info("calculator"))
 # if __name__ == "__main__":  
